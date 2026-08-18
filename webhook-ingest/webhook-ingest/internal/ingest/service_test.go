@@ -136,16 +136,42 @@ func TestConcurrentDuplicateDelivery(t *testing.T) {
 }
 
 func TestRecordingProcessingSurvivesRequestContext(t *testing.T) {
-	srv, st := testutil.NewServer(t)
+	st := testutil.NewStore(t)
 	eventID, callID, accountID := testutil.IDs(t, st)
 	ctx := context.Background()
 
-	body := eventJSON(eventID, callID, accountID)
-	if resp := post(t, srv.URL+"/webhooks/calls", body); resp.StatusCode != http.StatusOK {
-		t.Fatalf("got %d, want 200", resp.StatusCode)
+	cfg := config.Load()
+	rdb, err := redisclient.New(ctx, cfg.RedisAddr)
+	if err != nil {
+		t.Fatalf("redisclient.New: %v", err)
+	}
+	defer func() { _ = rdb.Close() }()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := ingest.New(st, stats.NewCache(), rdb, log)
+
+	evt := ingest.Event{
+		EventID:      eventID,
+		CallID:       callID,
+		AccountID:    accountID,
+		Status:       "completed",
+		DurationSec:  10,
+		RecordingURL: "https://example.com/recording.wav",
+		OccurredAt:   time.Now(),
 	}
 
-	time.Sleep(150 * time.Millisecond)
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	if err := svc.Ingest(reqCtx, evt); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	cancelReq()
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelShutdown()
+
+	if err := svc.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
 
 	var processed bool
 	row := st.Pool().QueryRow(ctx, `SELECT recording_processed FROM calls WHERE call_id = $1`, callID)
@@ -153,7 +179,7 @@ func TestRecordingProcessingSurvivesRequestContext(t *testing.T) {
 		t.Fatalf("scan recording_processed: %v", err)
 	}
 	if !processed {
-		t.Fatal("expected recording_processed to be true after async processing completed")
+		t.Fatal("expected recording_processed to be true after request context cancellation")
 	}
 }
 
