@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/convin/webhook-ingest/internal/testutil"
 )
@@ -127,5 +128,28 @@ func TestConcurrentDuplicateDelivery(t *testing.T) {
 		t.Fatalf("AccountStats call_count = %d, want 1", stats.CallCount)
 	}
 }
+
+func TestRecordingProcessingSurvivesRequestContext(t *testing.T) {
+	srv, st := testutil.NewServer(t)
+	eventID, callID, accountID := testutil.IDs(t, st)
+	ctx := context.Background()
+
+	body := eventJSON(eventID, callID, accountID)
+	if resp := post(t, srv.URL+"/webhooks/calls", body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("got %d, want 200", resp.StatusCode)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	var processed bool
+	row := st.Pool().QueryRow(ctx, `SELECT recording_processed FROM calls WHERE call_id = $1`, callID)
+	if err := row.Scan(&processed); err != nil {
+		t.Fatalf("scan recording_processed: %v", err)
+	}
+	if !processed {
+		t.Fatal("expected recording_processed to be true after async processing completed")
+	}
+}
+
 
 
