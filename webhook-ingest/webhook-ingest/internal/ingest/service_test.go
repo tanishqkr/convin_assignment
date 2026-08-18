@@ -212,20 +212,32 @@ func TestServiceShutdownWaitsForInFlightRecording(t *testing.T) {
 		t.Fatalf("Ingest: %v", err)
 	}
 
+	var beforeProcessed bool
+	_ = st.Pool().QueryRow(ctx, `SELECT recording_processed FROM calls WHERE call_id = $1`, callID).Scan(&beforeProcessed)
+	if beforeProcessed {
+		t.Fatal("expected recording_processed to be false immediately after Ingest")
+	}
+
+	shutdownStart := time.Now()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	if err := svc.Shutdown(shutdownCtx); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
+	shutdownDuration := time.Since(shutdownStart)
 
-	var processed bool
+	if shutdownDuration < 20*time.Millisecond {
+		t.Fatalf("Shutdown returned in %v, expected it to block for active recording work", shutdownDuration)
+	}
+
+	var afterProcessed bool
 	row := st.Pool().QueryRow(ctx, `SELECT recording_processed FROM calls WHERE call_id = $1`, callID)
-	if err := row.Scan(&processed); err != nil {
+	if err := row.Scan(&afterProcessed); err != nil {
 		t.Fatalf("scan recording_processed: %v", err)
 	}
-	if !processed {
-		t.Fatal("expected recording_processed to be true after Shutdown")
+	if !afterProcessed {
+		t.Fatal("expected recording_processed to be true after Shutdown completed")
 	}
 }
 
