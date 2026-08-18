@@ -38,7 +38,7 @@ func TestCacheRecordConcurrent(t *testing.T) {
 	const goroutines = 20
 	const iterations = 100
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
+	wg.Add(goroutines * 2)
 
 	for i := 0; i < goroutines; i++ {
 		go func() {
@@ -46,6 +46,14 @@ func TestCacheRecordConcurrent(t *testing.T) {
 			for j := 0; j < iterations; j++ {
 				c.Record("acc_1", 10)
 				_ = c.Get("acc_1")
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				c.Set("acc_2", stats.AccountStats{CallCount: int64(j), TotalDurationSec: int64(j * 5)})
+				_ = c.Get("acc_2")
 			}
 		}()
 	}
