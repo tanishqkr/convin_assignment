@@ -181,3 +181,23 @@ func (s *Store) IngestEventTx(ctx context.Context, e Event) (bool, error) {
 	return true, nil
 }
 
+func (s *Store) LoadAllAccountStats(ctx context.Context) (map[string]Stats, error) {
+	rows, err := s.pool.Query(ctx, `SELECT account_id, call_count, total_duration_sec FROM account_stats`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]Stats)
+	for rows.Next() {
+		var accountID string
+		var st Stats
+		if err := rows.Scan(&accountID, &st.CallCount, &st.TotalDurationSec); err != nil {
+			return nil, err
+		}
+		result[accountID] = st
+	}
+	return result, rows.Err()
+}
+
+

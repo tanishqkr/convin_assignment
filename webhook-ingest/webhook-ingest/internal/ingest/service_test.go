@@ -203,6 +203,40 @@ func TestServiceShutdownWaitsForInFlightRecording(t *testing.T) {
 	}
 }
 
+func TestLoadCacheRestoresDurableStats(t *testing.T) {
+	st := testutil.NewStore(t)
+	_, _, accountID := testutil.IDs(t, st)
+	ctx := context.Background()
+
+	if err := st.IncrementAccountStats(ctx, accountID, 100); err != nil {
+		t.Fatalf("IncrementAccountStats: %v", err)
+	}
+
+	cfg := config.Load()
+	rdb, err := redisclient.New(ctx, cfg.RedisAddr)
+	if err != nil {
+		t.Fatalf("redisclient.New: %v", err)
+	}
+	defer func() { _ = rdb.Close() }()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := ingest.New(st, stats.NewCache(), rdb, log)
+
+	if got := svc.Stats(accountID); got.CallCount != 0 {
+		t.Fatalf("expected 0 before LoadCache, got %d", got.CallCount)
+	}
+
+	if err := svc.LoadCache(ctx); err != nil {
+		t.Fatalf("LoadCache: %v", err)
+	}
+
+	got := svc.Stats(accountID)
+	if got.CallCount != 1 || got.TotalDurationSec != 100 {
+		t.Fatalf("got %+v, want CallCount=1 TotalDurationSec=100", got)
+	}
+}
+
+
 
 
 

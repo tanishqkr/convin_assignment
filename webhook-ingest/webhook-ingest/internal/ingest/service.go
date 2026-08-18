@@ -36,6 +36,20 @@ func (s *Service) Stats(accountID string) stats.AccountStats {
 	return s.cache.Get(accountID)
 }
 
+func (s *Service) LoadCache(ctx context.Context) error {
+	statsMap, err := s.store.LoadAllAccountStats(ctx)
+	if err != nil {
+		return err
+	}
+	for accID, st := range statsMap {
+		s.cache.Set(accID, stats.AccountStats{
+			CallCount:        st.CallCount,
+			TotalDurationSec: st.TotalDurationSec,
+		})
+	}
+	return nil
+}
+
 func (s *Service) Shutdown(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
