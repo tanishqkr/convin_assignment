@@ -19,7 +19,7 @@
 ## Why This Deduplication Strategy
 
 - **Postgres UNIQUE Constraint + Transactional `ON CONFLICT DO NOTHING` (Chosen)**
-  Postgres is the single authoritative source of truth for durable idempotency. Atomic insertion inside `IngestEventTx` guarantees strict ACID consistency. If `INSERT INTO events ... ON CONFLICT DO NOTHING` returns no row, duplicate deliveries immediately short-circuit without mutating `calls` or `account_stats`.
+  Postgres is the durable correctness authority for idempotency: the `UNIQUE` constraint and atomic `INSERT ... ON CONFLICT DO NOTHING` prevent concurrent deliveries from being accepted more than once, while the surrounding transaction keeps the associated durable side effects consistent. If `INSERT INTO events ... ON CONFLICT DO NOTHING` returns no row, duplicate deliveries immediately short-circuit without mutating `calls` or `account_stats`.
 
 - **Redis `SETNX`-Only (Rejected as Sole Correctness Authority)**
   While fast, Redis lacks durable persistence guarantees in typical setups. Relying on `SETNX` alone means a Redis restart, eviction, or memory pressure would silently open the door to duplicate ingestion into Postgres.
