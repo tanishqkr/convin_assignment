@@ -19,10 +19,10 @@
 ## Why This Deduplication Strategy
 
 - **Postgres UNIQUE Constraint + Transactional `ON CONFLICT DO NOTHING` (Chosen)**
-  Postgres is the single source of truth for durable state. Atomic insertion inside `IngestEventTx` guarantees strict ACID consistency. If `INSERT INTO events ... ON CONFLICT DO NOTHING` returns no row, duplicate deliveries immediately short-circuit without mutating `calls` or `account_stats`.
+  Postgres is the single authoritative source of truth for durable idempotency. Atomic insertion inside `IngestEventTx` guarantees strict ACID consistency. If `INSERT INTO events ... ON CONFLICT DO NOTHING` returns no row, duplicate deliveries immediately short-circuit without mutating `calls` or `account_stats`.
 
 - **Redis `SETNX`-Only (Rejected as Sole Correctness Authority)**
-  While fast, Redis in this architecture lacks persistent disk guarantees. A Redis restart or key eviction would silently allow duplicate events into Postgres.
+  While fast, Redis lacks durable persistence guarantees in typical setups. Relying on `SETNX` alone means a Redis restart, eviction, or memory pressure would silently open the door to duplicate ingestion into Postgres.
 
 - **Application-Level Check-Then-Act (Rejected)**
   Inherently vulnerable to race conditions across concurrent application instances and threads. Database-level constraints are the only race-free correctness authority.
@@ -32,10 +32,10 @@
 ## What Changes at 10,000 Webhooks/Second
 
 1. **Postgres Connection & Hot-Row Optimization**
-   Direct updates to single `account_stats` rows will suffer heavy lock contention. Shift to an append-only event stream or staging buffer (e.g. TimescaleDB/Postgres partition) and aggregate stats asynchronously in batches.
+   Direct updates to single `account_stats` rows for popular accounts will cause severe DB row lock contention and saturate the connection pool (`DBMaxConns=20`). Transition to an append-only event stream or staging buffer, aggregating stats asynchronously in micro-batches.
 
-2. **Redis as a Fast Pre-Check Edge Filter**
-   Use Redis `SETNX` with TTL in front of Postgres to filter duplicate requests early and shed load before hitting Postgres pool limits.
+2. **Redis as a Best-Effort Pre-Check Filter (Not a Correctness Gate)**
+   Use Redis `SETNX` with a short TTL as a high-throughput edge filter to shed duplicate request traffic before hitting Postgres pool limits. However, Redis serves only as a load-shedding optimization; Postgres retains sole authority over durable event acceptance so Redis evictions never cause dropped webhooks.
 
-3. **Durable Asynchronous Job Queue**
-   Replace in-process goroutines with a persistent worker queue (Redis Streams, RabbitMQ, or NATS). This ensures recording processing survives process crashes, supports exponential retries, and enforces backpressure downstream.
+3. **Durable Distributed Worker Queues**
+   Replace in-process goroutines with a persistent distributed queue (e.g., Redis Streams, RabbitMQ, or NATS). This ensures recording processing survives process crashes (beyond graceful SIGTERM stops), supports exponential backoff retries, and enforces backpressure downstream.
